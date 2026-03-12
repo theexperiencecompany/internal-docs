@@ -1,0 +1,58 @@
+---
+title: "Prerequisites"
+description: "Tools and accounts required before you start."
+---
+
+## Tools
+
+Install these before cloning the repo.
+
+<Steps>
+  <Step title="mise">
+    [mise](https://mise.jdx.dev/) manages tool versions (Node, Python, uv) and runs all dev tasks.
+
+    ```bash
+    curl https://mise.run | sh
+    ```
+
+    After cloning the repo, run `mise install` in the root to get the correct versions of everything.
+  </Step>
+  <Step title="Docker">
+    All infrastructure services (Postgres, Redis, ChromaDB, etc.) run in Docker.
+
+    Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine + Compose plugin.
+
+    Verify:
+
+    ```bash
+    docker compose version
+    ```
+  </Step>
+  <Step title="pnpm">
+    The monorepo uses pnpm as the JavaScript package manager. Never use npm or yarn.
+
+    mise installs pnpm automatically, or install it manually:
+
+    ```bash
+    npm install -g pnpm
+    ```
+  </Step>
+</Steps>
+
+## Accounts and credentials
+
+You need access to the following before working on production:
+
+| Service | What you need | Where to get it |
+|---|---|---|
+| GitHub | Access to `theexperiencecompany` org | Ask a team lead |
+| Infisical | Project access for secret injection | Ask a team lead |
+| WorkOS | API key + client ID | Infisical / team lead |
+| GCP | IAM role on `gaia-backend` project | Ask a team lead |
+| Discord Developer Portal | Application access | [discord.com/developers](https://discord.com/developers) |
+| Slack API | App credentials | [api.slack.com/apps](https://api.slack.com/apps) |
+| Telegram | Bot token from @BotFather | [@BotFather on Telegram](https://t.me/BotFather) |
+
+<Info>
+  Most secrets are stored in Infisical. Once you have access to the Infisical project, you can pull all env vars automatically rather than filling them in manually.
+</Info>

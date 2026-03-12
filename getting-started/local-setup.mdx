@@ -1,0 +1,90 @@
+---
+title: "Local setup"
+description: "Running GAIA on your development machine."
+---
+
+## Clone and install
+
+```bash
+git clone https://github.com/theexperiencecompany/gaia.git
+cd gaia
+mise install          # installs Node, Python, uv, pnpm, nx
+pnpm install          # install JS deps
+nx run api:sync       # sync Python deps for the API
+```
+
+## Environment files
+
+Each app has a `.env.example` file that documents all available variables. Copy it to create your local `.env`:
+
+```bash
+cp apps/api/.env.example apps/api/.env
+cp apps/bots/.env.example apps/bots/.env
+cp apps/web/.env.example apps/web/.env
+```
+
+Then fill in the values. At minimum, set:
+
+- `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD` — auth
+- `GAIA_BOT_API_KEY` and `BOT_SESSION_TOKEN_SECRET` — shared key between API and bots (generate with `openssl rand -hex 32`)
+
+See [Environment variables](/production/environment-variables) for a full breakdown.
+
+<Tip>
+  If you have Infisical access, you can skip manual `.env` editing. Set `INFISICAL_PROJECT_ID` and the machine identity vars, and secrets will be injected at startup.
+</Tip>
+
+## Start infrastructure
+
+From `infra/docker/` (or use the Nx wrappers):
+
+```bash
+# Start all infrastructure — Postgres, Redis, ChromaDB, RabbitMQ, MongoDB, Grafana
+docker compose up -d
+
+# Or via Nx from the repo root
+nx docker:up docker
+```
+
+Infrastructure services always start without a profile. App services (backend, worker, bots) require a profile flag — see [Docker setup](/production/docker).
+
+## Run the apps
+
+Open separate terminals for each service you need:
+
+```bash
+nx dev web          # Next.js frontend at http://localhost:3000
+nx dev api          # FastAPI at http://localhost:8000
+nx worker api       # Arq background worker
+```
+
+To run a bot locally:
+
+```bash
+cd apps/bots
+pnpm discord        # or pnpm slack / pnpm telegram
+```
+
+## Pre-commit hooks
+
+Install once:
+
+```bash
+mise run pre-commit:install
+```
+
+Hooks run automatically on `git commit`. To run manually:
+
+```bash
+mise run pre-commit
+```
+
+## Common commands
+
+```bash
+mise tasks                    # list all available tasks
+nx run-many -t lint           # lint all projects
+nx run-many -t type-check     # type-check all projects
+nx type-check api             # type-check the API only
+cd apps/api && uv run pytest  # run API tests
+```

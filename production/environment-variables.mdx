@@ -1,0 +1,140 @@
+---
+title: "Environment variables"
+description: "All environment variables for the API, bots, and web app."
+---
+
+## How env files work
+
+Each app has a `.env.example` in its directory. The actual `.env` file is gitignored and must be created manually or populated via Infisical.
+
+```
+apps/api/.env        ← read by gaia-backend and arq_worker
+apps/bots/.env       ← read by all three bots
+apps/web/.env        ← read at Next.js build time (NEXT_PUBLIC_* vars only)
+```
+
+<Info>
+  If Infisical is configured, secrets are injected at container startup. You still need a minimal `.env` with the Infisical credentials to bootstrap it.
+</Info>
+
+## apps/api/.env
+
+### Core
+
+| Variable | Required | Description |
+|---|---|---|
+| `ENV` | Yes | `development`, `staging`, or `production` |
+| `HOST` | Yes | Backend URL, e.g. `https://api.heygaia.io` |
+| `FRONTEND_URL` | Yes | Frontend URL, e.g. `https://heygaia.io` |
+| `GAIA_BACKEND_URL` | Yes | URL the voice agent uses to reach the API (use `http://host.docker.internal:8000` in Docker) |
+| `DISABLE_PROFILING` | No | Set to `true` to skip profiling (recommended in prod) |
+
+### Databases and queues
+
+| Variable | Required | Example |
+|---|---|---|
+| `POSTGRES_URL` | Yes | `postgresql://postgres:postgres@localhost:5432/langgraph` |
+| `MONGO_DB` | Dev only | `mongodb://localhost:27017/gaia` |
+| `REDIS_URL` | Yes | `redis://localhost:6379` |
+| `CHROMADB_HOST` | Yes | `localhost` or container name |
+| `CHROMADB_PORT` | Yes | `8080` |
+| `RABBITMQ_URL` | Yes | `amqp://guest:guest@localhost:5672/` |
+
+<Warning>
+  The PostgreSQL database name must be `langgraph`, not `postgres` or `gaia`. LangGraph writes its state there.
+</Warning>
+
+### Authentication (WorkOS)
+
+| Variable | Required | Description |
+|---|---|---|
+| `WORKOS_API_KEY` | Yes | WorkOS secret key |
+| `WORKOS_CLIENT_ID` | Yes | WorkOS OAuth client ID |
+| `WORKOS_COOKIE_PASSWORD` | Yes | Secret for signing session cookies (min 32 chars) |
+
+### Bot integration
+
+| Variable | Required | Description |
+|---|---|---|
+| `GAIA_BOT_API_KEY` | Yes | Shared key between API and all bots. Min 32 chars. Generate: `openssl rand -hex 32` |
+| `BOT_SESSION_TOKEN_SECRET` | Yes | JWT secret for bot session tokens. Min 32 chars. Must differ from `GAIA_BOT_API_KEY` |
+| `DISCORD_OAUTH_CLIENT_ID` | No | Enables one-click Discord account linking via browser |
+| `DISCORD_OAUTH_CLIENT_SECRET` | No | Required alongside `DISCORD_OAUTH_CLIENT_ID` |
+| `SLACK_OAUTH_CLIENT_ID` | No | Enables one-click Slack account linking |
+| `SLACK_OAUTH_CLIENT_SECRET` | No | Required alongside `SLACK_OAUTH_CLIENT_ID` |
+| `TELEGRAM_BOT_USERNAME` | No | Telegram bot username (e.g. `heygaia_bot`) |
+| `DISCORD_BOT_TOKEN` | No | Required for Discord notification channel adapter |
+| `TELEGRAM_BOT_TOKEN` | No | Required for Telegram notification channel adapter |
+
+### Optional integrations
+
+| Variable | Description |
+|---|---|
+| `GITHUB_TOKEN` | GitHub PAT (no scopes needed). Raises API limit from 60 to 5,000 req/hr for skill discovery. |
+| `LANGSMITH_TRACING` | Set to `true` to enable LangSmith tracing |
+| `LANGSMITH_API_KEY` | LangSmith API key |
+| `INFISICAL_PROJECT_ID` | Infisical project ID for secret injection |
+| `INFISICAL_MACHINE_IDENTITY_CLIENT_ID` | Infisical machine identity |
+| `INFISICAL_MACHINE_IDENTITY_CLIENT_SECRET` | Infisical machine identity secret |
+
+### Docker-only variables (set in compose, not .env)
+
+These are injected by Docker Compose and should not be in your `.env` file:
+
+| Variable | Value | Reason |
+|---|---|---|
+| `LOG_FORMAT` | `json` | Promtail expects NDJSON |
+| `LOG_COLORIZE` | `false` | Color codes break JSON parsing |
+| `WORKER_TYPE` | `main_app` / `arq_worker` | Tells the image which process to run |
+
+---
+
+## apps/bots/.env
+
+| Variable | Required | Description |
+|---|---|---|
+| `GAIA_API_URL` | Yes | API base URL, e.g. `http://localhost:8000` or `http://gaia-backend` inside Docker |
+| `GAIA_BOT_API_KEY` | Yes | Must exactly match `GAIA_BOT_API_KEY` in `apps/api/.env` |
+| `GAIA_FRONTEND_URL` | Yes | Frontend URL for links in bot messages |
+| `DISCORD_BOT_TOKEN` | Discord | Bot token from the Discord Developer Portal |
+| `DISCORD_CLIENT_ID` | Discord | OAuth2 client ID — required to register slash commands |
+| `SLACK_BOT_TOKEN` | Slack | Bot User OAuth Token from OAuth & Permissions |
+| `SLACK_APP_TOKEN` | Slack | App-Level Token (Socket Mode) |
+| `SLACK_SIGNING_SECRET` | Slack | Signing Secret from Basic Information |
+| `TELEGRAM_BOT_TOKEN` | Telegram | Token from @BotFather |
+
+<Tip>
+  All three bots read from the same `apps/bots/.env` file. Leave tokens blank for bots you are not running.
+</Tip>
+
+---
+
+## apps/web/.env
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEXT_PUBLIC_API_BASE_URL` | Yes | API URL with `/api/v1/` suffix, e.g. `https://api.heygaia.io/api/v1/` |
+| `NEXT_PUBLIC_GA_ID` | No | Google Analytics measurement ID |
+| `NEXT_PUBLIC_POSTHOG_KEY` | No | PostHog project API key |
+| `NEXT_PUBLIC_SENTRY_DSN` | No | Sentry DSN for frontend error tracking |
+| `NEXT_PUBLIC_BLOG_BEARER_TOKEN` | No | Bearer token for blog API integration |
+
+<Note>
+  Web env vars are baked in at build time. Changing them requires a new build and deployment.
+</Note>
+
+---
+
+## Grafana / observability
+
+These are set in the Docker Compose env file (not `apps/api/.env`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `GRAFANA_ADMIN_PASSWORD` | `changeme` | **Change this before production** |
+| `GRAFANA_ROOT_URL` | `http://localhost:4000` | Set to your public Grafana URL if behind a proxy |
+| `GRAFANA_HOST_PORT` | `4000` | Host port for Grafana |
+| `LOKI_HOST_PORT` | `3100` | Host port for Loki (bound to 127.0.0.1 in prod) |
+| `LOKI_PUSH_URL` | `http://loki:3100/loki/api/v1/push` | Where Promtail sends logs |
+| `LOKI_BASIC_AUTH_USER` | — | Loki basic auth (if using a remote Loki) |
+| `LOKI_BASIC_AUTH_PASSWORD` | — | Loki basic auth password |

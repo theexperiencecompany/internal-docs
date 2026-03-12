@@ -1,0 +1,91 @@
+---
+title: "Production overview"
+description: "How the production environment is structured."
+---
+
+## Infrastructure
+
+Production runs on a single GCP VM (`gaia-backend`, Ubuntu 24.04). All services are managed by Docker Compose using pre-built images pulled from GitHub Container Registry (GHCR).
+
+```
+GCP VM: gaia-backend
+└── docker-compose.prod.yml   (from logging-grafana repo)
+    ├── gaia-backend           FastAPI API
+    ├── arq_worker             Background job worker
+    ├── chromadb               Vector store
+    ├── postgres               Primary database (LangGraph state)
+    ├── redis                  Cache + job queue
+    ├── rabbitmq               Message broker
+    ├── prometheus             Metrics store
+    ├── loki                   Log store
+    ├── promtail               Log shipper
+    └── grafana                Observability UI
+    [profile: bots]
+    ├── discord-bot
+    ├── slack-bot
+    └── telegram-bot
+    [profile: voice-agent]
+    └── voice-agent-worker
+```
+
+## Docker images
+
+Images are built by GitHub Actions and pushed to GHCR on every merge to `master`.
+
+| Image | Tag |
+|---|---|
+| `ghcr.io/theexperiencecompany/gaia` | `latest` |
+| `ghcr.io/theexperiencecompany/gaia-bot-discord` | `latest` |
+| `ghcr.io/theexperiencecompany/gaia-bot-slack` | `latest` |
+| `ghcr.io/theexperiencecompany/gaia-bot-telegram` | `latest` |
+| `ghcr.io/theexperiencecompany/gaia-voice-agent` | `latest` |
+
+The API image (`gaia`) also runs the Arq worker — same image, different `WORKER_TYPE` env var.
+
+## Deployment flow
+
+1. Code merges to `master`
+2. `build.yml` builds affected Docker images and pushes to GHCR
+3. `deploy.yml` SSHes into the GCP VM, pulls new images, and restarts containers
+4. The frontend is deployed to Vercel separately via `deploy-frontend.yml`
+
+## Compose file location on the VM
+
+The production compose file lives in the `logging-grafana` repo (which includes the full observability stack). On the VM:
+
+```
+/home/aryan/gaia/infra/docker/docker-compose.prod.yml
+```
+
+The API and bots env files are read from:
+
+```
+/home/aryan/gaia/apps/api/.env
+/home/aryan/gaia/apps/bots/.env
+```
+
+<Warning>
+  These `.env` files on the VM are not in version control. They must be kept up to date manually when new variables are added to `.env.example`. Use Infisical to manage them centrally.
+</Warning>
+
+## Databases
+
+| Database | Purpose | Notes |
+|---|---|---|
+| PostgreSQL | LangGraph state | DB name is `langgraph`, not `postgres` or `gaia` |
+| Redis | Cache + Arq job queue | Persistent with named volume |
+| ChromaDB | Vector embeddings | Persistent with named volume |
+| RabbitMQ | Message broker | Management UI on port 15672 |
+
+MongoDB is not used in production (only in the development compose file).
+
+## Resource limits
+
+| Service | Memory limit |
+|---|---|
+| `gaia-backend` | 4 GB |
+| `arq_worker` | 2 GB |
+| `prometheus` | 512 MB |
+| `loki` | 512 MB |
+| `promtail` | 128 MB |
+| `grafana` | 256 MB |

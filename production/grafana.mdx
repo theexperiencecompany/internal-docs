@@ -1,0 +1,147 @@
+---
+title: "Grafana and observability"
+description: "Metrics, logs, and dashboards for the GAIA production stack."
+---
+
+## Stack overview
+
+The observability stack is managed from the [logging-grafana](https://github.com/theexperiencecompany/logging-grafana) repo, which is what runs on the production VM.
+
+| Component | Image | Role |
+|---|---|---|
+| Prometheus | `prom/prometheus:v3.1.0` | Scrapes and stores metrics (30-day retention) |
+| Loki | `grafana/loki:3.3.2` | Stores logs |
+| Promtail | `grafana/promtail:3.3.2` | Ships logs from Docker and log files to Loki |
+| Grafana | `grafana/grafana:11.4.0` | Dashboard UI for both metrics and logs |
+| cAdvisor | `gcr.io/cadvisor/cadvisor:v0.49.1` | Container CPU/memory/network/disk metrics |
+| node_exporter | `prom/node-exporter:v1.8.2` | Host machine metrics |
+| postgres_exporter | `prometheuscommunity/postgres-exporter:v0.17.0` | PostgreSQL metrics |
+| redis_exporter | `oliver006/redis_exporter:v1.66.0` | Redis metrics |
+| blackbox_exporter | `prom/blackbox-exporter:v0.25.0` | HTTP probes (used for ChromaDB health) |
+
+RabbitMQ exposes native Prometheus metrics via the `rabbitmq_prometheus` plugin — no separate exporter needed.
+
+---
+
+## Configuration files
+
+All config lives in `infra/docker/observability/`:
+
+| File | Purpose |
+|---|---|
+| `prometheus.yml` | Scrape targets and intervals |
+| `loki-config.yaml` | Loki storage and ingestion config |
+| `promtail-config.yaml` | Log sources and labels |
+| `blackbox.yml` | HTTP probe definitions |
+| `rabbitmq-enabled-plugins` | Enables `rabbitmq_prometheus` plugin |
+| `metrics_token` | Bearer token for Prometheus auth (if used) |
+| `grafana/provisioning/` | Auto-provisioned datasources and dashboards |
+
+---
+
+## Grafana access
+
+Grafana runs on port `4000` by default.
+
+```
+http://<server-ip>:4000
+Username: admin
+Password: (set via GRAFANA_ADMIN_PASSWORD env var)
+```
+
+<Warning>
+  The default password is `changeme`. Set `GRAFANA_ADMIN_PASSWORD` in your env file before the first production deployment. Once Grafana starts with the default, change it immediately in the UI.
+</Warning>
+
+Datasources and dashboards are provisioned automatically from `grafana/provisioning/`. You do not need to configure them manually after first startup.
+
+---
+
+## Setting up for production
+
+<Steps>
+  <Step title="Set the admin password">
+    Add to your Docker Compose env file (or the `.env` file in `infra/docker/`):
+
+    ```bash
+    GRAFANA_ADMIN_PASSWORD=your-secure-password
+    ```
+  </Step>
+  <Step title="Configure the root URL (if behind a proxy)">
+    If Grafana is served at a public domain (e.g. `https://grafana.example.com`), set:
+
+    ```bash
+    GRAFANA_ROOT_URL=https://grafana.example.com
+    ```
+
+    Without this, redirects and embedding will use `localhost`.
+  </Step>
+  <Step title="Start the observability stack">
+    The observability services start with the main compose command — no separate profile is needed:
+
+    ```bash
+    docker compose -f docker-compose.prod.yml up -d
+    ```
+
+    Grafana, Loki, Promtail, and Prometheus all start automatically.
+  </Step>
+</Steps>
+
+---
+
+## Log shipping with Promtail
+
+Promtail ships logs from two sources:
+
+1. **Docker containers** — via `/var/run/docker.sock`. All containers running on the host are automatically discovered and labelled.
+2. **Log files** — mounts `apps/api/logs` and `apps/api/logs/worker` for services running outside Docker.
+
+<Note>
+  In production, the API always runs in Docker, so the log file mounts are a safety fallback. All logs flow through stdout → Docker → Promtail.
+</Note>
+
+### Log format requirements
+
+All GAIA services write JSON logs (`LOG_FORMAT=json`, `LOG_COLORIZE=false`). This is required for Promtail to parse them as NDJSON. These values are hardcoded in the Docker Compose files — do not override them.
+
+### Remote Loki (optional)
+
+To ship logs to a remote Loki instance, set these env vars before starting Promtail:
+
+```bash
+LOKI_PUSH_URL=https://your-loki-instance/loki/api/v1/push
+LOKI_BASIC_AUTH_USER=your-username
+LOKI_BASIC_AUTH_PASSWORD=your-password
+```
+
+---
+
+## Prometheus metrics
+
+Prometheus scrapes metrics from:
+
+- RabbitMQ (`:15692/metrics`)
+- PostgreSQL via `postgres_exporter`
+- Redis via `redis_exporter`
+- All Docker containers via `cAdvisor`
+- Host machine via `node_exporter`
+- ChromaDB via `blackbox_exporter` HTTP probe
+
+Metrics are retained for 30 days. Prometheus is constrained to 512 MB memory and 0.5 CPU.
+
+---
+
+## Updating dashboards
+
+Dashboards are stored as JSON in `grafana/provisioning/dashboards/`. To update:
+
+1. Edit the dashboard in the Grafana UI
+2. Export it as JSON (Dashboard settings → JSON model)
+3. Replace the file in `grafana/provisioning/dashboards/`
+4. Commit and push to the `logging-grafana` repo
+
+Changes take effect on the next container restart:
+
+```bash
+docker compose -f docker-compose.prod.yml restart grafana
+```

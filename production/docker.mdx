@@ -1,0 +1,161 @@
+---
+title: "Docker setup"
+description: "Running GAIA with Docker Compose in production."
+---
+
+## Compose files
+
+| File | Purpose |
+|---|---|
+| `docker-compose.yml` | Local development — profile-gated services, all infra always on |
+| `docker-compose.prod.yml` | Production — pulls pre-built images from GHCR |
+| `docker-compose.selfhost.yml` | Self-hosting — builds from source, includes web frontend |
+
+All files live in `infra/docker/` (in the `logging-grafana` repo on the production VM).
+
+---
+
+## Production deployment
+
+### First-time setup
+
+<Steps>
+  <Step title="Clone the logging-grafana repo on the VM">
+    ```bash
+    git clone https://github.com/theexperiencecompany/logging-grafana.git ~/gaia
+    cd ~/gaia/infra/docker
+    ```
+  </Step>
+  <Step title="Create env files">
+    ```bash
+    cp ../../apps/api/.env.example ../../apps/api/.env
+    cp ../../apps/bots/.env.example ../../apps/bots/.env
+    ```
+
+    Fill in all required values. See [Environment variables](/production/environment-variables).
+
+    At minimum set:
+    - All database URLs (pointing to Docker service names, not localhost)
+    - WorkOS credentials
+    - `GAIA_BOT_API_KEY` and `BOT_SESSION_TOKEN_SECRET`
+    - `GRAFANA_ADMIN_PASSWORD`
+  </Step>
+  <Step title="Log in to GHCR">
+    ```bash
+    echo $GITHUB_TOKEN | docker login ghcr.io -u <your-github-username> --password-stdin
+    ```
+  </Step>
+  <Step title="Pull and start">
+    ```bash
+    # Core services only
+    docker compose -f docker-compose.prod.yml up -d
+
+    # With bots
+    docker compose -f docker-compose.prod.yml --profile bots up -d
+
+    # With voice agent
+    docker compose -f docker-compose.prod.yml --profile voice-agent up -d
+    ```
+  </Step>
+</Steps>
+
+### Updating to latest images
+
+```bash
+cd ~/gaia/infra/docker
+git pull
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --remove-orphans
+```
+
+---
+
+## Profiles
+
+Services in Docker Compose are grouped by profile. Infrastructure services start without any profile.
+
+| Profile | Services |
+|---|---|
+| *(none)* | postgres, redis, chromadb, rabbitmq, prometheus, loki, promtail, grafana, all exporters |
+| `bots` | discord-bot, slack-bot, telegram-bot |
+| `voice-agent` | voice-agent-worker |
+
+In development (`docker-compose.yml`), additional profiles exist:
+
+| Profile | Services |
+|---|---|
+| `backend` | gaia-backend |
+| `worker` | arq_worker |
+| `all` | everything |
+
+---
+
+## Port mappings
+
+All ports are configurable via env vars in the compose env file.
+
+| Service | Default host port | Container port | Override var |
+|---|---|---|---|
+| API | `8000` | `80` | `API_HOST_PORT` |
+| ChromaDB | `8080` | `8000` | `CHROMADB_HOST_PORT` |
+| PostgreSQL | `5432` | `5432` | `POSTGRES_HOST_PORT` |
+| Redis | `6379` | `6379` | `REDIS_HOST_PORT` |
+| RabbitMQ AMQP | `5672` | `5672` | `RABBITMQ_HOST_PORT` |
+| RabbitMQ management | `15672` | `15672` | `RABBITMQ_MGMT_PORT` |
+| Grafana | `4000` | `3000` | `GRAFANA_HOST_PORT` |
+| Loki | `3100` | `3100` | `LOKI_HOST_PORT` |
+
+<Note>
+  The API listens on port **80 inside the container** and is exposed as **8000 on the host**. This is intentional — do not change the internal port.
+</Note>
+
+<Note>
+  In production, Loki binds to `127.0.0.1:3100` (localhost only). It is not exposed publicly. If you need remote log access, use an SSH tunnel or route through Grafana.
+</Note>
+
+---
+
+## Service dependencies
+
+Services wait for their dependencies to be healthy before starting:
+
+```
+gaia-backend  → chromadb, postgres, redis, rabbitmq (all healthy)
+arq_worker    → redis (healthy)
+bots          → gaia-backend (healthy)
+grafana       → loki (healthy)
+promtail      → loki (healthy)
+```
+
+---
+
+## Common operations
+
+```bash
+# Check service status
+docker compose -f docker-compose.prod.yml ps
+
+# View logs
+docker compose -f docker-compose.prod.yml logs -f gaia-backend
+docker compose -f docker-compose.prod.yml logs -f arq_worker
+
+# Restart a single service
+docker compose -f docker-compose.prod.yml restart gaia-backend
+
+# Stop everything
+docker compose -f docker-compose.prod.yml down
+
+# Stop and remove volumes (destructive — deletes all data)
+docker compose -f docker-compose.prod.yml down -v
+```
+
+---
+
+## Gotchas
+
+- **PostgreSQL DB name is `langgraph`** — not `postgres` or `gaia`. This is what LangGraph expects.
+- **`LOG_FORMAT=json` and `LOG_COLORIZE=false`** are hardcoded in the compose files. Promtail expects NDJSON from stdout — do not change these.
+- **ChromaDB uses port 8000 internally** but exposes 8080 on the host to avoid colliding with the API's host port 8000.
+- **The `arq_worker` uses the same image as `gaia-backend`** (`ghcr.io/theexperiencecompany/gaia:latest`). The `WORKER_TYPE` env var tells it which process to run.
+- **The voice agent caches HuggingFace models** in a named Docker volume. First start is slow. In prod, `HF_HUB_OFFLINE=1` prevents re-downloads.
+- **RabbitMQ requires `observability/rabbitmq-enabled-plugins`** to enable the Prometheus metrics plugin.
